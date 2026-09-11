@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: cessdigital
+    runtime: node
+    plan: free
+    rootDir: CESSDIGITALPUBLICADA
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Secretos: se configuran en el Dashboard de Render (Environment), NO aquí.
+      - key: MERCADOPAGO_ACCESS_TOKEN
+        sync: false
+      - key: DASHBOARD_NIP
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENWA_API_KEY
+        sync: false
+      - key: OPENWA_URL
+        sync: false
+      - key: OPENWA_SESSION_ID
+        sync: false
