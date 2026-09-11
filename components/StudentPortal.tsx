@@ -1,8 +1,9 @@
 
 import React, { useMemo, useState } from 'react';
-import { Student, Payment, Grade, Group, SubjectAssignment, PaymentStatus, StudyPlan } from '../types';
-import { STUDY_PLAN_CONFIG, generatePaymentSchedule, calculatePaymentPlanStatus } from '../utils/paymentPlans';
+import { Student, Payment, Grade, Group, SubjectAssignment, PaymentStatus } from '../types';
+import { computeStudentFinancialInfo } from '../utils/paymentPlans';
 import { useModal } from './ModalProvider';
+import { withAuthHeader } from '../utils/authUtils';
 
 interface StudentPortalProps {
   student: Student;
@@ -22,73 +23,12 @@ const StudentPortal: React.FC<StudentPortalProps> = ({ student, payments, grades
     const paidPayments = studentPayments
       .filter(p => p.status === PaymentStatus.Paid)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    
+
     const lastPayment = paidPayments.length > 0 ? paidPayments[0] : null;
 
-    // Calcular adeudo
-    // El adeudo se basa en el plan de pagos y lo que no se ha pagado hasta la fecha actual
-    const schedule = generatePaymentSchedule(student.courseStartDate, student.studyPlan, student.hasScholarship);
-    const planConfig = STUDY_PLAN_CONFIG[student.studyPlan];
-    const paymentPlanStatus = calculatePaymentPlanStatus(student, payments);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    let totalDebt = 0;
-    let nextPaymentDate: string | null = null;
-
-    // Inscripción
-    if (!paymentPlanStatus.enrollment) {
-      totalDebt += planConfig.prices.enrollment;
-      if (student.enrollmentDate && (!nextPaymentDate || new Date(student.enrollmentDate) < new Date(nextPaymentDate))) {
-          nextPaymentDate = student.enrollmentDate;
-      }
-    }
-
-    // Mensualidades/Semanales vencidas
-    paymentPlanStatus.schedule.forEach((isPaid, index) => {
-      if (!isPaid) {
-        const item = schedule[index];
-        const dueDate = new Date(item.dueDate);
-        dueDate.setHours(0, 0, 0, 0);
-        
-        let isLate = false;
-        let lateFee = 0;
-        
-        if (planConfig.feeType === 'Semanalidad') {
-          if (today > dueDate) {
-            isLate = true;
-            lateFee = 50;
-          }
-        } else if (planConfig.feeType === 'Mensualidad') {
-          const targetMonth = dueDate.getMonth();
-          const targetYear = dueDate.getFullYear();
-          const deadline = new Date(targetYear, targetMonth, 5);
-          deadline.setHours(0, 0, 0, 0);
-          
-          if (today > deadline) {
-            isLate = true;
-            lateFee = 200;
-          }
-        }
-
-        let lostScholarshipAmount = 0;
-        if (isLate && student.hasScholarship) {
-          if (student.studyPlan === StudyPlan.LevelingDegree) {
-            lostScholarshipAmount = 300;
-          } else if (student.studyPlan === StudyPlan.GeneralNursing) {
-            lostScholarshipAmount = 400;
-          }
-        }
-
-        if (dueDate <= today) {
-          totalDebt += item.cost + lateFee + lostScholarshipAmount;
-        }
-
-        if (!nextPaymentDate || dueDate < new Date(nextPaymentDate)) {
-          nextPaymentDate = item.dueDate.toISOString();
-        }
-      }
-    });
+    // El adeudo se basa en el plan de pagos y lo que no se ha pagado hasta la fecha
+    // actual; la misma lógica corre en el servidor para validar el cobro de Mercado Pago.
+    const { totalDebt, nextPaymentDate } = computeStudentFinancialInfo(student, payments);
 
     return {
       totalDebt,
@@ -144,7 +84,7 @@ const StudentPortal: React.FC<StudentPortalProps> = ({ student, payments, grades
     try {
       const response = await fetch('/api/create-preference', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await withAuthHeader({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           title: `Pago de Adeudo - ${student.nombre} ${student.apellidoPaterno}`,
           quantity: 1,

@@ -1,7 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 import firebaseConfig from './firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -12,4 +11,6 @@ export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 }, firebaseConfig.firestoreDatabaseId);
 
-export const storage = getStorage(app);
+// La aplicación no usa Firebase Storage: los expedientes de alumnos no se suben como
+// archivos, solo se guarda la ruta de referencia de dónde se resguardan físicamente
+// (ver ScannedDocument en types.ts).

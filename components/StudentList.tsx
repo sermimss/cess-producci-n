@@ -72,7 +72,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, selectedStudentId, 
 
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md h-full flex flex-col print:h-auto print:shadow-none print:overflow-visible">
+    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md h-full flex flex-col">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex justify-between items-center">
             <h2 className="text-xl font-semibold">Alumnos</h2>
@@ -123,7 +123,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, selectedStudentId, 
             ))}
         </div>
       </div>
-      <div className="overflow-y-auto print:overflow-visible print:block flex-grow">
+      <div className="overflow-y-auto flex-grow">
         {filteredStudents.length === 0 ? (
           <div className="text-center p-8 text-gray-500 h-full flex flex-col justify-center">
             <p>No hay alumnos que coincidan con el filtro.</p>
@@ -223,6 +223,7 @@ const StudentList: React.FC<StudentListProps> = ({ students, selectedStudentId, 
       </div>
       {printingStudent && (
         <StudentReportCardModal
+          isOpen={!!printingStudent}
           student={printingStudent}
           onClose={() => setPrintingStudent(null)}
         />

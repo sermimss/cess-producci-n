@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Teacher } from '../types';
-import { createSecondaryUser } from '../utils/authUtils';
+import { createTeacherAccount } from '../utils/authUtils';
 
 interface TeacherFormModalProps {
   isOpen: boolean;
@@ -24,9 +24,9 @@ const TeacherFormModal: React.FC<TeacherFormModalProps> = ({ isOpen, onClose, on
     setLoading(true);
 
     try {
-      // 1. Create the user in Firebase Auth
-      await createSecondaryUser(email, password);
-      
+      // 1. Create the user in Firebase Auth (con el custom claim role: teacher)
+      await createTeacherAccount(email, password);
+
       // 2. Save the teacher document in Firestore
       onSave({
         userId,
@@ -34,21 +34,19 @@ const TeacherFormModal: React.FC<TeacherFormModalProps> = ({ isOpen, onClose, on
         email,
         createdAt: new Date().toISOString(),
       });
-      
+
       setName('');
       setEmail('');
       setPassword('');
       onClose();
     } catch (err: any) {
       console.error(err);
-      if (err.code === 'auth/email-already-in-use') {
+      if (err.code === 'auth/email-already-exists') {
         setError('El correo electrónico ya está en uso por otra cuenta.');
-      } else if (err.code === 'auth/weak-password') {
+      } else if (err.code === 'auth/invalid-password') {
         setError('La contraseña debe tener al menos 6 caracteres.');
-      } else if (err.code === 'auth/operation-not-allowed') {
-        setError('La autenticación por correo/contraseña no está habilitada. Por favor, habilítala en la consola de Firebase.');
       } else {
-        setError('Error al crear la cuenta. Verifica la consola para más detalles.');
+        setError(err.message || 'Error al crear la cuenta. Verifica la consola para más detalles.');
       }
     } finally {
       setLoading(false);

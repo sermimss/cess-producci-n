@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, query, where, WhereFilterOp, documentId } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, query, where, WhereFilterOp } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { useAuth } from '../AuthProvider';
 
@@ -49,9 +49,9 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     },
     operationType,
     path
-  }
+  };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  return errInfo.error;
 }
 
 export function useFirestoreData<T extends { id: string }>(
@@ -62,18 +62,19 @@ export function useFirestoreData<T extends { id: string }>(
   filterOperator: WhereFilterOp = "=="
 ) {
   const [data, setData] = useState<T[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
     if (!user || !shouldFetch) {
       setData([]);
+      setError(null);
       return;
     }
 
     let q = query(collection(db, collectionName));
     if (filterField && filterValue !== undefined) {
-      const field = filterField === '__name__' ? documentId() : filterField;
-      q = query(collection(db, collectionName), where(field, filterOperator, filterValue));
+      q = query(collection(db, collectionName), where(filterField, filterOperator, filterValue));
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -82,8 +83,10 @@ export function useFirestoreData<T extends { id: string }>(
         items.push({ id: doc.id, ...doc.data() } as T);
       });
       setData(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, collectionName);
+      setError(null);
+    }, (err) => {
+      const errMsg = handleFirestoreError(err, OperationType.GET, collectionName);
+      setError(errMsg);
     });
 
     return unsubscribe;
@@ -96,8 +99,8 @@ export function useFirestoreData<T extends { id: string }>(
     try {
       await setDoc(docRef, { ...item, userId: user.uid });
       return newId;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `${collectionName}/${newId}`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `${collectionName}/${newId}`);
     }
   };
 
@@ -107,8 +110,8 @@ export function useFirestoreData<T extends { id: string }>(
     const { id, ...dataToUpdate } = item;
     try {
       await setDoc(docRef, { ...dataToUpdate, userId: user.uid }, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${item.id}`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${item.id}`);
     }
   };
 
@@ -117,10 +120,10 @@ export function useFirestoreData<T extends { id: string }>(
     const docRef = doc(db, collectionName, id);
     try {
       await deleteDoc(docRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `${collectionName}/${id}`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `${collectionName}/${id}`);
     }
   };
 
-  return { data, addItem, updateItem, deleteItem };
+  return { data, error, addItem, updateItem, deleteItem };
 }

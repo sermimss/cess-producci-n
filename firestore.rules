@@ -25,6 +25,15 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.email == "cessplantelchihuahua@gmail.com";
     }
 
+    // Las cuentas de docentes se crean en el backend (POST /api/create-teacher-account)
+    // con Firebase Admin SDK, que les asigna este custom claim al momento de crearlas.
+    // Antes no existía forma barata de distinguir "docente real" de "cualquier cuenta
+    // autenticada" dentro de una regla, así que el directorio de alumnos (CURP, teléfono,
+    // domicilio, fecha de nacimiento) quedaba expuesto a cualquiera que se autenticara.
+    function isTeacher() {
+      return isAuthenticated() && request.auth.token.role == 'teacher';
+    }
+
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
@@ -88,11 +97,20 @@ service cloud.firestore {
     // ===============================================================
 
     match /students/{studentId} {
-      // Zero-Trust ABAC: Only the exact student matching the email, or Admin, can read
-      allow list: if isAdmin() || (isAuthenticated() && (resource.data.email == request.auth.token.email || request.auth.token.email == studentId.lower() + "@cessdigital.local" || !('email' in resource.data) || resource.data.email == "" || resource.data.email == null));
-      allow get: if isAdmin() || (isAuthenticated() && (resource.data.email == request.auth.token.email || request.auth.token.email == studentId.lower() + "@cessdigital.local" || !('email' in resource.data) || resource.data.email == "" || resource.data.email == null));
-      // Only Admin can modify global student data, EXCEPT students can claim their unassigned matricula
+      // Admin y docentes (verificados por custom claim) pueden LISTAR el directorio
+      // completo. `get` (consultar UN registro por matrícula ya conocida) se deja
+      // abierto a cualquier autenticado porque StudentAccountClaim lo necesita para que
+      // un alumno recién registrado pueda validar su propia matrícula antes de tener
+      // email vinculado; el riesgo real (volcado masivo de PII) era `list`, no `get`.
+      // El alumno logueado también hace un `list` (filtrado por su propio email en el
+      // cliente) para encontrar su registro; se permite solo cuando el documento
+      // devuelto coincide con el correo del token, así que sigue sin poder listar a
+      // los demás.
+      allow list: if isAdmin() || isTeacher() || (isAuthenticated() && resource.data.email == request.auth.token.email);
+      allow get: if isAdmin() || isAuthenticated();
+      // Solo el Admin puede dar de alta o eliminar alumnos
       allow create: if isAdmin() && isValidStudent(incoming());
+      // Admin puede actualizar cualquier campo; el alumno solo puede reclamar su matrícula enlazando email y username
       allow update: if 
         (isAdmin() && isValidStudent(incoming()) && uidUnchanged()) ||
         (isAuthenticated() && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'username']) && (!('email' in existing()) || existing().email == "" || existing().email == null) && incoming().email == request.auth.token.email);
@@ -100,10 +118,12 @@ service cloud.firestore {
     }
 
     match /payments/{paymentId} {
-      // Students can only read payments tagged with their email or matching their studentId. 
-      allow read: if isAdmin() || (isAuthenticated() && (resource.data.studentEmail == request.auth.token.email || request.auth.token.email == resource.data.studentId.lower() + "@cessdigital.local"));
+      // Estudiantes solo pueden consultar pagos etiquetados con su email; Admin consulta todos
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.studentEmail == request.auth.token.email);
       allow create: if isAdmin() && isValidPayment(incoming());
-      allow update: if isAdmin() && isValidPayment(incoming()) && uidUnchanged();
+      allow update: if 
+        (isAdmin() && isValidPayment(incoming()) && uidUnchanged()) ||
+        (isAuthenticated() && incoming().diff(existing()).affectedKeys().hasOnly(['studentEmail']) && (!('studentEmail' in existing()) || existing().studentEmail == "" || existing().studentEmail == null) && incoming().studentEmail == request.auth.token.email);
       allow delete: if isAdmin();
     }
 
@@ -115,31 +135,37 @@ service cloud.firestore {
     }
 
     match /groups/{groupId} {
-      // Students and Teachers need to read groups they belong to.
-      // Currently, app expects them to sync all relevant groups. 
-      // If we don't allow general read, app breaks for students.
-      // E.g., Students need to see their groups.
-      allow read: if isAuthenticated(); // Broadened slightly, but Groups contain no PII/Secrets.
+      allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidGroup(incoming());
       allow update: if isAdmin() && isValidGroup(incoming()) && uidUnchanged();
       allow delete: if isAdmin();
     }
 
-    match /subjectAssignments/{subjectAssignmentId} {
-      // Safe to be read by authenticated users, contains schedule mapping
+    match /studyPlanSubjects/{subjectId} {
+      // Seguro para lectura autenticada; edición exclusiva de dirección
       allow read: if isAuthenticated();
-      // Teachers CAN create their assignments in the Teacher Portal
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /subjectAssignments/{subjectAssignmentId} {
+      allow read: if isAuthenticated();
       allow create: if isAdmin() || (isAuthenticated() && isValidSubjectAssignment(incoming()));
       allow update: if isAdmin() || (isAuthenticated() && isValidSubjectAssignment(incoming()) && uidUnchanged());
-      allow delete: if isAdmin() || isAuthenticated(); // Simplified for teacher portal management
+      // Solo dirección puede eliminar asignaciones de materias
+      allow delete: if isAdmin();
     }
 
     match /grades/{gradeId} {
-      // Students can only see their grades. Teachers can see all grades (assuming they taught them, but we use blanket auth read for teachers for now, or just limit to those who are admin/student/teacher).
-      allow read: if isAdmin() || (isAuthenticated() && (resource.data.studentEmail == request.auth.token.email || request.auth.token.email == resource.data.studentId.lower() + "@cessdigital.local" || ('teacherName' in resource.data))); // Note: simplified for Teachers.
+      // El alumno solo lee sus propias calificaciones; el docente solo las que él mismo capturó
+      // (antes se comprobaba que existiera la llave 'teacherName', que siempre es verdadero y
+      // permitía a cualquier usuario autenticado leer todas las calificaciones).
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.studentEmail == request.auth.token.email || resource.data.teacherEmail == request.auth.token.email));
       allow create: if isAdmin() || (isAuthenticated() && isValidGrade(incoming()));
-      allow update: if isAdmin() || (isAuthenticated() && isValidGrade(incoming()) && uidUnchanged());
-      allow delete: if isAdmin() || isAuthenticated();
+      allow update: if 
+        (isAdmin() && isValidGrade(incoming()) && uidUnchanged()) ||
+        (isAuthenticated() && incoming().diff(existing()).affectedKeys().hasOnly(['studentEmail']) && (!('studentEmail' in existing()) || existing().studentEmail == "" || existing().studentEmail == null) && incoming().studentEmail == request.auth.token.email);
+      // Solo dirección puede eliminar calificaciones; los alumnos no tienen permiso de borrado
+      allow delete: if isAdmin();
     }
   }
 }

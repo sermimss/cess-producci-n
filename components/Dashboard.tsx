@@ -73,7 +73,7 @@ const Dashboard: React.FC<DashboardProps> = ({ payments, students, studyPlanFilt
         }
 
         // Check schedule
-        const schedule = generatePaymentSchedule(courseStartDate, studyPlan);
+        const schedule = generatePaymentSchedule(courseStartDate, studyPlan, student.hasScholarship);
         schedule.forEach((item, index) => {
             if (!paymentPlanStatus.schedule[index] && item.dueDate < today) {
                 overdue += item.cost;
