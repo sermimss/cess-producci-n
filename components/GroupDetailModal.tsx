@@ -61,7 +61,7 @@ const GroupDetailModal: React.FC<GroupDetailModalProps> = ({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto print:overflow-visible print:block p-6" ref={printRef}>
+        <div className="flex-1 overflow-y-auto print:overflow-visible p-6" ref={printRef}>
           <div className="print-only mb-4 hidden">
             <h2 className="text-2xl font-bold text-center mb-2">{group.name}</h2>
             <p className="text-center text-gray-600 mb-4">{group.studyPlan} - {group.classDay} de {group.scheduleStart} a {group.scheduleEnd}</p>

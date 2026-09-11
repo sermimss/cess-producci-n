@@ -120,6 +120,7 @@ const TeacherPortal: React.FC<TeacherPortalProps> = ({ userId, groups, students,
       subject: gradeSubject,
       grade: Number(gradeValue),
       teacherName: selectedTeacher,
+      teacherEmail: teacher.email || '',
       createdAt: new Date().toISOString(),
     };
 

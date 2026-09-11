@@ -24,10 +24,10 @@ import TeacherSubjectsModal from './components/TeacherSubjectsModal';
 import AssignCredentialsModal from './components/AssignCredentialsModal';
 import StudentPortal from './components/StudentPortal';
 import { StudentAccountClaim } from './components/StudentAccountClaim';
-import { LoginScreen } from './components/LoginScreen';
 import WhatsAppConfirmationModal from './components/WhatsAppConfirmationModal';
-import { generatePaymentSchedule, getInitialPaymentPlanStatus, STUDY_PLAN_CONFIG, calculatePaymentPlanStatus } from './utils/paymentPlans';
+import { generatePaymentSchedule, getInitialPaymentPlanStatus, STUDY_PLAN_CONFIG, calculatePaymentPlanStatus, computeRecalculatedStudentState } from './utils/paymentPlans';
 import { generateMatricula } from './utils/matriculas';
+import { withAuthHeader } from './utils/authUtils';
 import { useFirestoreData } from './hooks/useFirestoreData';
 import { useAuth } from './AuthProvider';
 import { useModal } from './components/ModalProvider';
@@ -38,15 +38,13 @@ import { Grade, SubjectAssignment, Teacher } from './types';
 type Tab = 'alumnos' | 'grupos' | 'docentes' | 'planes';
 
 const App: React.FC = () => {
-  const { user, loading, signIn, signInWithEmail, registerWithEmail, logout } = useAuth();
+  const { user, loading, signIn, signInWithEmail, registerWithEmail } = useAuth();
   const { showAlert, showConfirm } = useModal();
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isTeacherLogin, setIsTeacherLogin] = useState(true); // default to email pass
   const [isRegisterMode, setIsRegisterMode] = useState(false);
-  const [isAdminLoginMode, setIsAdminLoginMode] = useState(false);
-
   const isAdminUser = user?.email === 'cessplantelchihuahua@gmail.com';
 
   // Estado para simular login de maestro siendo admin
@@ -65,20 +63,14 @@ const App: React.FC = () => {
   }, [user, teachers, isAdminUser, adminTeacherMode]);
 
   // ALUMNOS: Admin y Docentes necesitan todos. Alumnos solo se necesitan a sí mismos.
-  const isMatriculaLogin = user?.email?.endsWith('@cessdigital.local');
-  const matriculaId = isMatriculaLogin ? user.email?.split('@')[0].toUpperCase() : undefined;
-  
-  const studentFilterField = isAdminUser || loggedInTeacher ? undefined : (isMatriculaLogin ? '__name__' : 'email');
-  const studentFilterValue = isAdminUser || loggedInTeacher ? undefined : (isMatriculaLogin ? matriculaId : user?.email);
+  const studentFilterField = isAdminUser || loggedInTeacher ? undefined : 'email';
+  const studentFilterValue = isAdminUser || loggedInTeacher ? undefined : user?.email;
   const { data: students, addItem: addStudentToDb, updateItem: updateStudentInDb, deleteItem: deleteStudentFromDb } = useFirestoreData<Student>('students', !!user, studentFilterField, studentFilterValue);
 
   // Identificar si el usuario logueado es un alumno
   const loggedInStudent = useMemo(() => {
     if (!user || !user.email || isAdminUser) return null;
-    return students.find(s => 
-      s.email?.toLowerCase() === user.email?.toLowerCase() || 
-      user.email?.toLowerCase() === `${s.id.toLowerCase()}@cessdigital.local`
-    );
+    return students.find(s => s.email?.toLowerCase() === user.email?.toLowerCase());
   }, [user, students, isAdminUser]);
 
   const groupFilterField = isAdminUser || loggedInTeacher ? undefined : (loggedInStudent ? 'studentIds' : undefined);
@@ -94,8 +86,8 @@ const App: React.FC = () => {
   const { data: subjectAssignments, addItem: addSubjectAssignmentToDb, deleteItem: deleteSubjectAssignmentFromDb } = useFirestoreData<SubjectAssignment>('subjectAssignments', shouldFetchSubjectAssignments);
 
   // CALIFICACIONES: Solo se descargan si un alumno entra.
-  const gradeFilterField = loggedInStudent ? 'studentId' : undefined;
-  const gradeFilterValue = loggedInStudent ? loggedInStudent.id : undefined;
+  const gradeFilterField = loggedInStudent ? 'studentEmail' : undefined;
+  const gradeFilterValue = loggedInStudent ? user?.email : undefined;
   const { data: grades } = useFirestoreData<Grade>('grades', !!loggedInStudent, gradeFilterField, gradeFilterValue);
 
   // PAGOS: Solo descargar si es estudiante, o si el Admin DESBLOQUEÓ el Dashboard con el PIN, o si el Admin seleccionó a un alumno
@@ -106,9 +98,9 @@ const App: React.FC = () => {
   const adminWantsSingleStudentPayments = isAdminUser && !isDashboardUnlocked && !!selectedStudentId;
   const shouldFetchPayments = !!loggedInStudent || adminWantsAllPayments || adminWantsSingleStudentPayments;
   
-  const paymentFilterField = adminWantsAllPayments ? undefined : 'studentId';
-  // Use logged in student if applicable, otherwise specific selected student, otherwise undefined
-  const paymentFilterValue = adminWantsAllPayments ? undefined : (loggedInStudent ? loggedInStudent.id : (selectedStudentId || undefined));
+  const paymentFilterField = adminWantsAllPayments ? undefined : (loggedInStudent ? 'studentEmail' : 'studentId');
+  // Usar el email del alumno logueado para satisfacer reglas de Firestore, o el studentId si el Admin seleccionó a un alumno
+  const paymentFilterValue = adminWantsAllPayments ? undefined : (loggedInStudent ? user?.email : (selectedStudentId || undefined));
 
   const { data: payments, addItem: addPaymentToDb, updateItem: updatePaymentInDb, deleteItem: deletePaymentFromDb } = useFirestoreData<Payment>(
     'payments', 
@@ -118,7 +110,10 @@ const App: React.FC = () => {
   );
 
   
-  // Función para recalcular el estado del checklist de un alumno basado en sus pagos
+  // Función para recalcular el estado del checklist de un alumno basado en sus pagos.
+  // La lógica de cálculo vive en utils/paymentPlans.ts (computeRecalculatedStudentState)
+  // porque el servidor (server.ts) necesita la MISMA lógica al acreditar pagos de
+  // Mercado Pago ya verificados.
   const recalculateStudentStatus = (studentOrId: string | Student, currentPayments: Payment[]) => {
     let student: Student | undefined;
     if (typeof studentOrId === 'string') {
@@ -126,85 +121,14 @@ const App: React.FC = () => {
     } else {
         student = studentOrId;
     }
-    
-    if (!student || !student.courseStartDate) return;
 
-    const planConfig = STUDY_PLAN_CONFIG[student.studyPlan];
-    if (!planConfig) return;
+    if (!student) return;
 
-    // Sumar todos los pagos que afectan al plan (Inscripción, Mensualidad, Reinscripción, Saldo a favor)
-    const relevantPayments = currentPayments.filter(p => 
-      p.studentId === student.id && 
-      p.status === PaymentStatus.Paid &&
-      [PaymentCategory.Enrollment, PaymentCategory.MonthlyFee, PaymentCategory.WeeklyFee, PaymentCategory.ReEnrollment, PaymentCategory.Balance].includes(p.category)
-    );
-
-    let totalPaid = relevantPayments.reduce((sum, p) => sum + p.amount, 0);
-    const newStatus: PaymentPlanStatus = {
-      enrollment: false,
-      schedule: []
-    };
-
-    // 1. Aplicar a Inscripción
-    if (totalPaid >= planConfig.prices.enrollment) {
-      newStatus.enrollment = true;
-      totalPaid -= planConfig.prices.enrollment;
-    }
-
-    // 2. Aplicar a Mensualidades/Semanas y Reinscripciones
-    const schedule = generatePaymentSchedule(student.courseStartDate, student.studyPlan, student.hasScholarship);
-    newStatus.schedule = Array(schedule.length).fill(false);
-
-    for (let i = 0; i < schedule.length; i++) {
-      if (totalPaid >= schedule[i].cost) {
-        newStatus.schedule[i] = true;
-        totalPaid -= schedule[i].cost;
-      } else {
-        break;
-      }
-    }
-
-    let newStudentStatus = student.status;
-
-    // Verificar si cumple con los requisitos de Graduación:
-    const allSchedulePaid = newStatus.schedule.length > 0 && newStatus.schedule.every(s => s === true);
-    const titlePaid = currentPayments.some(p => p.studentId === student.id && p.category === PaymentCategory.TitleAndGraduation && p.status === PaymentStatus.Paid);
-    const subjectsCleared = student.subjectsCleared === true;
-
-    if (newStatus.enrollment && allSchedulePaid && titlePaid && subjectsCleared) {
-       // Only auto-graduate, don't auto-active if they were manually set to Baja
-       if (newStudentStatus !== StudentStatus.Baja) {
-           newStudentStatus = StudentStatus.Graduated;
-       }
-    } else if (newStudentStatus === StudentStatus.Graduated) {
-       // Si deja de cumplir los requisitos (ej. se borró un pago error)
-       newStudentStatus = StudentStatus.Active;
-    }
-
-    // Verificar Baja Automatica por falta de pago (Solo si esta Activo)
-    if (newStudentStatus === StudentStatus.Active) {
-      const studentPayments = currentPayments.filter(p => p.studentId === student.id && p.status === PaymentStatus.Paid);
-      if (studentPayments.length > 0) {
-        const lastPaymentDate = new Date(Math.max(...studentPayments.map(p => new Date(p.date).getTime())));
-        const now = new Date();
-        const diffTime = Math.abs(now.getTime() - lastPaymentDate.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (diffDays > 120 && (!newStatus.enrollment || !allSchedulePaid)) {
-          newStudentStatus = StudentStatus.Baja;
-        }
-      } else {
-        const enrollment = new Date(student.enrollmentDate || student.courseStartDate || new Date().toISOString());
-        const now = new Date();
-        const diffTime = Math.abs(now.getTime() - enrollment.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (diffDays > 120) {
-          newStudentStatus = StudentStatus.Baja;
-        }
-      }
-    }
+    const result = computeRecalculatedStudentState(student, currentPayments);
+    if (!result) return;
 
     // Actualizar el alumno con el nuevo estado calculado
-    updateStudentInDb({ ...student, paymentPlanStatus: newStatus, status: newStudentStatus });
+    updateStudentInDb({ ...student, paymentPlanStatus: result.paymentPlanStatus, status: result.status });
   };
 
   // Estado para el control de la UI
@@ -240,6 +164,34 @@ const App: React.FC = () => {
 
   const [showNipInput, setShowNipInput] = useState(false);
   const [nipValue, setNipValue] = useState('');
+  const [isVerifyingNip, setIsVerifyingNip] = useState(false);
+
+  // Verifica el NIP de Dirección contra el backend (nunca se compara en el cliente,
+  // para que el NIP real no viaje dentro del bundle de JavaScript).
+  const verifyNip = async () => {
+    if (isVerifyingNip) return;
+    setIsVerifyingNip(true);
+    try {
+      const res = await fetch('/api/verify-nip', {
+        method: 'POST',
+        headers: await withAuthHeader({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ nip: nipValue }),
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        setIsDashboardUnlocked(true);
+      } else {
+        await showAlert(data.error || 'NIP incorrecto. Acceso denegado.', 'Error de Seguridad');
+      }
+    } catch (error) {
+      console.error('Error al verificar el NIP:', error);
+      await showAlert('No se pudo verificar el NIP con el servidor.', 'Error de Conexión');
+    } finally {
+      setIsVerifyingNip(false);
+      setShowNipInput(false);
+      setNipValue('');
+    }
+  };
   
   // Estado para el modo oscuro
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -252,7 +204,7 @@ const App: React.FC = () => {
     root.classList.add(theme);
   }, [theme]);
 
-  // Manejar el callback de Mercado Pago
+  // Manejar el callback de Mercado Pago de forma segura mediante verificación de backend
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const status = params.get('status');
@@ -261,112 +213,45 @@ const App: React.FC = () => {
     const preferenceId = params.get('preference_id');
 
     if (status === 'approved' && paymentId && studentId && user && loggedInStudent) {
-      // Remover los params de la URL para que no se ejecute dos veces en el reload
+      // Remover los params de la URL para evitar reprocesamientos
       window.history.replaceState({}, document.title, window.location.pathname);
 
-      // Verificamos si este pago ya fue registrado buscando en todo el arreglo
-      // Pero 'payments' puede no haber terminado de cargar aqui.
-      // UseFirestoreData maneja payments = [] inicialmente.
-      // Así que primero vamos a esperar a asegurarnos que pasaron 2 segundos o checamos directamente,
-      // para evitar duplicidad, lo mejor es guardar y si hay un query no pasa nada si agregamos y es duplicado? 
-      // Si pasa. Busquemos en la base de datos o en los pagos ya cargados.
-      
-      const checkAndAddPayment = async () => {
-        // En lugar de buscar en payments, guardaremos el status e informaremos.
+      const verifyAndRecordPayment = async () => {
         try {
-          const qCheck = query(collection(db, 'payments'), where('description', '>=', `MP-${paymentId}`));
-          const checkSnapshot = await getDocs(qCheck);
-          // Check if any payment description literally includes this paymentId
-          const isDuplicate = checkSnapshot.docs.some(doc => doc.data().description.includes(paymentId));
+          // Verificación Y registro ocurren en el backend en una sola llamada: el servidor
+          // consulta la API real de Mercado Pago y, si el pago es válido, lo escribe él
+          // mismo en Firestore con la cuenta de servicio (las reglas de Firestore no
+          // permiten que el alumno escriba pagos directamente, por diseño). El listener
+          // en tiempo real de useFirestoreData reflejará el nuevo pago automáticamente.
+          const verifyRes = await fetch('/api/verify-payment', {
+            method: 'POST',
+            headers: await withAuthHeader({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ paymentId, studentId, preferenceId })
+          });
 
-          if (!isDuplicate) {
-             const student = students.find(s => s.id === studentId);
-             if (student) {
-                // Fetch student payments
-                const qStudent = query(collection(db, 'payments'), where('studentId', '==', studentId));
-                const studentPaymentsSnapshot = await getDocs(qStudent);
-                const existingPayments = studentPaymentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Payment);
+          const verifyData = await verifyRes.json();
+          if (!verifyRes.ok || !verifyData.valid) {
+            showAlert(verifyData.error || 'No se pudo verificar la validez del pago con Mercado Pago.', 'Error de Pago');
+            return;
+          }
 
-                // Calcular adeudo (amount de la deuda)
-                const schedule = generatePaymentSchedule(student.courseStartDate, student.studyPlan, student.hasScholarship);
-                const planConfig = STUDY_PLAN_CONFIG[student.studyPlan];
-                const paymentPlanStatus = calculatePaymentPlanStatus(student, existingPayments);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                
-                let totalDebt = 0;
-
-                if (!paymentPlanStatus.enrollment) {
-                  totalDebt += planConfig.prices.enrollment;
-                }
-
-                paymentPlanStatus.schedule.forEach((isPaid, index) => {
-                  if (!isPaid) {
-                    const item = schedule[index];
-                    const dueDate = new Date(item.dueDate);
-                    dueDate.setHours(0, 0, 0, 0);
-                    
-                    let isLate = false;
-                    let lateFee = 0;
-                    
-                    if (planConfig.feeType === 'Semanalidad') {
-                      if (today > dueDate) {
-                        isLate = true;
-                        lateFee = 50;
-                      }
-                    } else if (planConfig.feeType === 'Mensualidad') {
-                      const targetMonth = dueDate.getMonth();
-                      const targetYear = dueDate.getFullYear();
-                      const deadline = new Date(targetYear, targetMonth, 5);
-                      deadline.setHours(0, 0, 0, 0);
-                      
-                      if (today > deadline) {
-                        isLate = true;
-                        lateFee = 200;
-                      }
-                    }
-
-                    let lostScholarshipAmount = 0;
-                    if (isLate && student.hasScholarship) {
-                      if (student.studyPlan === StudyPlan.LevelingDegree) {
-                        lostScholarshipAmount = 300;
-                      } else if (student.studyPlan === StudyPlan.GeneralNursing) {
-                        lostScholarshipAmount = 400;
-                      }
-                    }
-
-                    if (dueDate <= today) {
-                      totalDebt += item.cost + lateFee + lostScholarshipAmount;
-                    }
-                  }
-                });
-
-                const newPayment: Omit<Payment, 'id'> = {
-                  studentId: student.id,
-                  amount: totalDebt > 0 ? totalDebt : 0, 
-                  date: new Date().toISOString(),
-                  category: PaymentCategory.Balance,
-                  description: `Pago Mercado Pago ID: ${paymentId}. Ref: ${preferenceId}`,
-                  status: PaymentStatus.Paid,
-                };
-                
-                addPaymentToDb(newPayment).then(() => {
-                   // Al agregarlo, recalculamos
-                   recalculateStudentStatus(student, [...existingPayments, newPayment as Payment]);
-                });
-                showAlert('Tu pago ha sido registrado exitosamente y reflejado en tu cuenta.', 'Pago Exitoso');
-             }
+          const verifiedAmount = Number(verifyData.amount) || 0;
+          if (verifyData.alreadyRecorded) {
+            showAlert('Este pago ya había sido registrado y acreditado con anterioridad.', 'Pago Registrado');
+          } else {
+            showAlert(`Tu pago de $${verifiedAmount.toLocaleString('es-MX', { minimumFractionDigits: 2 })} ha sido verificado y registrado exitosamente en tu cuenta.`, 'Pago Exitoso');
           }
         } catch (error) {
-          console.error('Error al procesar el retorno de MP', error);
+          console.error('Error al procesar la verificación de Mercado Pago:', error);
+          showAlert('Hubo un problema verificando tu pago con el servidor.', 'Error de Verificación');
         }
       };
 
-      checkAndAddPayment();
+      verifyAndRecordPayment();
     } else if (status === 'failure' || status === 'pending') {
-       window.history.replaceState({}, document.title, window.location.pathname);
-       const msg = status === 'pending' ? 'Tu pago está en proceso.' : 'Tu pago fue rechazado o hubo un error.';
-       showAlert(msg, 'Estado del Pago');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      const msg = status === 'pending' ? 'Tu pago está en proceso de acreditación.' : 'Tu pago fue rechazado o no se completó.';
+      showAlert(msg, 'Estado del Pago');
     }
   }, [user, loggedInStudent, students]);
 
@@ -538,17 +423,18 @@ const App: React.FC = () => {
     if (oldStudent && oldStudent.studyPlan !== updatedStudent.studyPlan) {
       if (await showConfirm('Cambiar el plan de estudios reiniciará el checklist de pagos. ¿Desea continuar?')) {
         const newPaymentPlanStatus = getInitialPaymentPlanStatus(updatedStudent.studyPlan);
-        recalculateStudentStatus({ ...updatedStudent, paymentPlanStatus: newPaymentPlanStatus }, payments);
+        await updateStudentInDb({ ...updatedStudent, paymentPlanStatus: newPaymentPlanStatus });
         await assignStudentToGroup(updatedStudent.id, updatedStudent);
       } else {
         updatedStudent.studyPlan = oldStudent.studyPlan;
-        recalculateStudentStatus(updatedStudent, payments);
+        await updateStudentInDb(updatedStudent);
         if (oldStudent.schedule !== updatedStudent.schedule || oldStudent.courseStartDate !== updatedStudent.courseStartDate) {
           await assignStudentToGroup(updatedStudent.id, updatedStudent);
         }
       }
     } else {
-      recalculateStudentStatus(updatedStudent, payments);
+      // Mantener el estado financiero intacto al editar datos personales del alumno
+      await updateStudentInDb(updatedStudent);
       if (oldStudent && (oldStudent.schedule !== updatedStudent.schedule || oldStudent.courseStartDate !== updatedStudent.courseStartDate)) {
         await assignStudentToGroup(updatedStudent.id, updatedStudent);
       }
@@ -635,13 +521,20 @@ const App: React.FC = () => {
     const phoneNumber = student.telefono.replace(/\D/g, '');
     const formattedPhone = phoneNumber.length === 10 ? `52${phoneNumber}` : phoneNumber;
     
+    const paymentDateFormatted = payment.date.includes('T') 
+      ? new Date(payment.date).toLocaleDateString('es-MX')
+      : (() => {
+          const parts = (payment.date || '').split('-');
+          return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : payment.date;
+        })();
+
     const message = `*RECIBO DE PAGO - CESS PLANTEL CHIHUAHUA*\n\n` +
       `Hola *${student.nombre} ${student.apellidoPaterno}*,\n` +
       `Hemos registrado tu pago con éxito.\n\n` +
       `*Detalles del Pago:*\n` +
       `• Concepto: ${payment.description}\n` +
       `• Monto: $${payment.amount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n` +
-      `• Fecha: ${new Date(payment.date).toLocaleDateString('es-MX')}\n` +
+      `• Fecha: ${paymentDateFormatted}\n` +
       `• Categoría: ${payment.category}\n` +
       `• Estado: ${payment.status}\n\n` +
       `¡Gracias por tu pago!`;
@@ -649,9 +542,7 @@ const App: React.FC = () => {
     try {
       const response = await fetch('/api/send-whatsapp', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: await withAuthHeader({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ phoneNumber: formattedPhone, message }),
       });
 
@@ -915,20 +806,10 @@ const App: React.FC = () => {
   };
 
   if (!user) {
-    if (!isAdminLoginMode) {
-      return <LoginScreen onAdminTeacherMode={() => setIsAdminLoginMode(true)} />;
-    }
-
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-4 relative">
-        <button 
-           onClick={() => setIsAdminLoginMode(false)}
-           className="absolute top-6 left-6 text-gray-500 hover:text-gray-900 dark:hover:text-white"
-        >
-          &larr; Volver
-        </button>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-4">
         <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-md text-center w-full max-w-md">
-          <h2 className="text-2xl font-bold mb-6">Acceso a Personal</h2>
+          <h2 className="text-2xl font-bold mb-6">Bienvenido a Appcess</h2>
           
           <div className="flex space-x-2 mb-6 bg-gray-100 dark:bg-gray-700 p-1 rounded-lg">
             <button
@@ -941,46 +822,102 @@ const App: React.FC = () => {
               onClick={() => { setIsTeacherLogin(true); setLoginError(''); setIsRegisterMode(false); }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${isTeacherLogin ? 'bg-white dark:bg-gray-600 shadow text-indigo-600 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}
             >
-              Portal Docentes
+              Docentes / Alumnos
             </button>
           </div>
           
           {isTeacherLogin ? (
             <div className="animate-fade-in">
-              <p className="mb-6 text-gray-600 dark:text-gray-400">Ingresa con tu correo de docente.</p>
-              <form onSubmit={handleEmailLogin} className="space-y-4 text-left mb-2">
-                {loginError && (
-                  <div className="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm text-center">
-                    {loginError}
-                  </div>
-                )}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Correo Electrónico</label>
-                  <input
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    className="block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña</label>
-                  <input
-                    type="password"
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    className="block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
-                  />
-                </div>
-                <button 
-                  type="submit"
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition-colors mt-4"
-                >
-                  Ingresar al Portal
-                </button>
-              </form>
+              {isRegisterMode ? (
+                <>
+                  <p className="mb-4 text-gray-600 dark:text-gray-400">Genera tu nuevo usuario. Asegúrate de tener tu matrícula a mano.</p>
+                  <form onSubmit={handleRegisterMode} className="space-y-4 text-left mb-2">
+                    {loginError && (
+                      <div className="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm text-center">
+                        {loginError}
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Correo Electrónico a Enlazar</label>
+                      <input
+                        type="email"
+                        required
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        className="block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Crea una Contraseña</label>
+                      <input
+                        type="password"
+                        required
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        min={6}
+                        className="block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                      />
+                    </div>
+                    <button 
+                      type="submit"
+                      className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-colors mt-4"
+                    >
+                      Registrarme
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setIsRegisterMode(false)}
+                      className="w-full mt-2 text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+                    >
+                      Ya tengo cuenta, iniciar sesión
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <p className="mb-6 text-gray-600 dark:text-gray-400">Ingresa con tu correo y contraseña registrados.</p>
+                  <form onSubmit={handleEmailLogin} className="space-y-4 text-left mb-2">
+                    {loginError && (
+                      <div className="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm text-center">
+                        {loginError}
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Correo Electrónico</label>
+                      <input
+                        type="email"
+                        required
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        className="block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña</label>
+                      <input
+                        type="password"
+                        required
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        className="block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                      />
+                    </div>
+                    <button 
+                      type="submit"
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition-colors mt-4"
+                    >
+                      Ingresar al Portal
+                    </button>
+                  </form>
+                  <button 
+                    type="button"
+                    onClick={() => setIsRegisterMode(true)}
+                    className="w-full mt-4 text-sm text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline"
+                  >
+                    ¿Eres alumno de nuevo ingreso y tienes matrícula? Registrate aquí
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="animate-fade-in">
@@ -1057,17 +994,9 @@ const App: React.FC = () => {
                        autoFocus
                        value={nipValue}
                        onChange={(e) => setNipValue(e.target.value)}
-                       onKeyDown={async (e) => {
+                       onKeyDown={(e) => {
                          if (e.key === 'Enter') {
-                            if (nipValue === '7695686') {
-                              setIsDashboardUnlocked(true);
-                              setShowNipInput(false);
-                              setNipValue('');
-                            } else {
-                              await showAlert('NIP incorrecto. Acceso denegado.', 'Error de Seguridad');
-                              setShowNipInput(false);
-                              setNipValue('');
-                            }
+                            verifyNip();
                          }
                        }}
                      />
@@ -1081,21 +1010,12 @@ const App: React.FC = () => {
                        >
                          Cancelar
                        </button>
-                       <button 
-                         className="flex-1 bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700 transition-colors"
-                         onClick={async () => {
-                            if (nipValue === '7695686') {
-                              setIsDashboardUnlocked(true);
-                              setShowNipInput(false);
-                              setNipValue('');
-                            } else {
-                              await showAlert('NIP incorrecto. Acceso denegado.', 'Error de Seguridad');
-                              setShowNipInput(false);
-                              setNipValue('');
-                            }
-                         }}
+                       <button
+                         className="flex-1 bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                         disabled={isVerifyingNip}
+                         onClick={verifyNip}
                        >
-                         Verificar
+                         {isVerifyingNip ? 'Verificando...' : 'Verificar'}
                        </button>
                      </div>
                    </div>
@@ -1308,7 +1228,6 @@ const App: React.FC = () => {
                 </div>
                 <GroupList
                   groups={groups}
-                  students={students}
                   studyPlanFilter={studyPlanFilter}
                   onViewDetails={(group) => {
                     setDetailGroup(group);
@@ -1482,19 +1401,6 @@ const App: React.FC = () => {
               <StudyPlansAdmin />
             ) : null}
           </>
-        ) : user?.email?.includes('@cessdigital.local') ? (
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-8 text-center max-w-lg mx-auto mt-10">
-            <h2 className="text-2xl font-bold text-red-600 mb-4">Matrícula no encontrada</h2>
-            <p className="mb-6 text-gray-700 dark:text-gray-300">
-              No encontramos ningún alumno activo con esta matrícula en el sistema.
-            </p>
-            <button 
-              onClick={() => logout()}
-              className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium"
-            >
-              Volver a intentar
-            </button>
-          </div>
         ) : (
           <StudentAccountClaim 
              userEmail={user.email} 

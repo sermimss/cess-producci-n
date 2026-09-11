@@ -53,7 +53,10 @@ export interface PaymentPlanStatus {
 
 export interface ScannedDocument {
   name: string;
-  url: string; // Base64 data URL or external link
+  // Ruta relativa de referencia (archivero físico, carpeta de red, etc.) donde se
+  // guarda el documento. La aplicación NO almacena el archivo en sí, solo esta
+  // referencia de texto.
+  path: string;
 }
 
 export enum StudentSchedule {
@@ -146,6 +149,7 @@ export interface Grade {
   grade: number;
   extraordinaryGrade?: number; // Calificación de extraordinario
   teacherName: string;
+  teacherEmail?: string; // Para seguridad NoSQL
   createdAt: string;
 }
 

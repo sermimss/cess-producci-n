@@ -2,8 +2,6 @@
 import React, { useState, useEffect } from 'react';
 import { Student, StudentStatus, StudyPlan, ScannedDocument, StudentSchedule } from '../types';
 import { useModal } from './ModalProvider';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { storage } from '../firebase';
 
 interface StudentFormModalProps {
   isOpen: boolean;
@@ -31,8 +29,8 @@ const StudentFormModal: React.FC<StudentFormModalProps> = ({ isOpen, onClose, on
   const [enrollmentDate, setEnrollmentDate] = useState('');
   const [courseStartDate, setCourseStartDate] = useState('');
   const [scannedDocuments, setScannedDocuments] = useState<ScannedDocument[]>([]);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [newDocName, setNewDocName] = useState('');
+  const [newDocPath, setNewDocPath] = useState('');
 
 
   useEffect(() => {
@@ -73,34 +71,20 @@ const StudentFormModal: React.FC<StudentFormModalProps> = ({ isOpen, onClose, on
       setEnrollmentDate(today);
       setCourseStartDate(today);
       setScannedDocuments([]);
-      setPendingFiles([]);
+      setNewDocName('');
+      setNewDocPath('');
     }
   }, [student, isOpen]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const validFiles: File[] = [];
-    for (const file of Array.from(files) as File[]) {
-      if (file.size > 5 * 1024 * 1024) {
-        await showAlert(`El archivo ${file.name} es demasiado grande. El límite es 5MB por archivo para la Nube.`, 'Archivo muy grande');
-        continue;
-      }
-      validFiles.push(file);
-    }
-    
-    if (validFiles.length > 0) {
-        setPendingFiles(prev => [...prev, ...validFiles]);
-    }
+  const addDocumentReference = () => {
+    if (!newDocName.trim() || !newDocPath.trim()) return;
+    setScannedDocuments(prev => [...prev, { name: newDocName.trim(), path: newDocPath.trim() }]);
+    setNewDocName('');
+    setNewDocPath('');
   };
 
   const removeDocument = (index: number) => {
     setScannedDocuments(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const removePendingFile = (index: number) => {
-    setPendingFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const validateCurp = (curp: string): { isValid: boolean; message: string } => {
@@ -153,41 +137,13 @@ const StudentFormModal: React.FC<StudentFormModalProps> = ({ isOpen, onClose, on
     const formattedApellidoPaterno = toProperCase(apellidoPaterno.trim());
     const formattedApellidoMaterno = toProperCase(apellidoMaterno.trim());
 
-    setIsUploading(true);
-    let uploadedDocs: ScannedDocument[] = [];
-    
-    try {
-        if (pendingFiles.length > 0) {
-            for (const file of pendingFiles) {
-                const uniqueFileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-                const storageRef = ref(storage, `alumnos_expedientes/${curp.toUpperCase()}/${uniqueFileName}`);
-                
-                const snapshot = await uploadBytes(storageRef, file);
-                const downloadUrl = await getDownloadURL(snapshot.ref);
-                
-                uploadedDocs.push({
-                    name: file.name,
-                    url: downloadUrl
-                });
-            }
-        }
-    } catch (error) {
-        console.error("Error uploading to Firebase Storage:", error);
-        await showAlert("Hubo un problema subiendo los archivos a la Nube. Verifica tu conexión.", "Error de Bóveda");
-        setIsUploading(false);
-        return;
-    }
-
-    const finalDocs = [...scannedDocuments, ...uploadedDocs];
-
     const finalHasScholarship = (studyPlan === StudyPlan.GeneralNursing || studyPlan === StudyPlan.LevelingDegree) ? hasScholarship : false;
-    onSave({ 
-      nombre: formattedNombre, 
-      apellidoPaterno: formattedApellidoPaterno, 
-      apellidoMaterno: formattedApellidoMaterno, 
-      fechaNacimiento, calle, numero, colonia, telefono, status, curp: curp.toUpperCase(), studyPlan, schedule, enrollmentDate, courseStartDate, scannedDocuments: finalDocs, hasScholarship: finalHasScholarship, subjectsCleared 
+    onSave({
+      nombre: formattedNombre,
+      apellidoPaterno: formattedApellidoPaterno,
+      apellidoMaterno: formattedApellidoMaterno,
+      fechaNacimiento, calle, numero, colonia, telefono, status, curp: curp.toUpperCase(), studyPlan, schedule, enrollmentDate, courseStartDate, scannedDocuments, hasScholarship: finalHasScholarship, subjectsCleared
     });
-    setIsUploading(false);
   };
   
   if (!isOpen) return null;
@@ -397,59 +353,57 @@ const StudentFormModal: React.FC<StudentFormModalProps> = ({ isOpen, onClose, on
               </div>
 
               <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Expediente Digital (Bóveda Nube)</label>
-                <div className="flex items-center space-x-2 mb-3">
-                  <label className="cursor-pointer bg-white dark:bg-gray-700 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm leading-4 font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    <span>Seleccionar Archivos</span>
-                    <input type="file" className="hidden" multiple accept="image/*,.pdf" onChange={handleFileUpload} disabled={isUploading} />
-                  </label>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">Máx 5MB por archivo (PDF, JPG, PNG)</span>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Expediente Físico (Referencia)</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  La aplicación no almacena los documentos. Anota solo dónde se resguarda cada uno
+                  (ej. "Archivero A, carpeta 12" o una ruta de red/unidad compartida).
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={newDocName}
+                    onChange={(e) => setNewDocName(e.target.value)}
+                    placeholder="Nombre del documento (ej. Acta de nacimiento)"
+                    className="flex-1 block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                  />
+                  <input
+                    type="text"
+                    value={newDocPath}
+                    onChange={(e) => setNewDocPath(e.target.value)}
+                    placeholder="Ruta o ubicación (ej. Archivero A / Carpeta 12)"
+                    className="flex-1 block w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                  />
+                  <button
+                    type="button"
+                    onClick={addDocumentReference}
+                    disabled={!newDocName.trim() || !newDocPath.trim()}
+                    className="bg-white dark:bg-gray-700 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
+                  >
+                    Agregar
+                  </button>
                 </div>
-                
-                {/* Archivos ya subidos en la nube */}
+
                 {scannedDocuments.length > 0 && (
                   <div className="mb-2">
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase">En la Nube</h4>
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase">Referencias registradas</h4>
                       <ul className="space-y-2 mt-2">
                         {scannedDocuments.map((doc, index) => (
-                          <li key={`cloud-${index}`} className="flex items-center justify-between text-sm bg-indigo-50 dark:bg-indigo-900/30 p-2 rounded-md border border-indigo-100 dark:border-indigo-800">
-                            <a href={doc.url} target="_blank" rel="noopener noreferrer" className="truncate max-w-[200px] text-indigo-700 dark:text-indigo-400 hover:underline font-medium" title={doc.name}>
-                                📄 {doc.name}
-                            </a>
+                          <li key={index} className="flex items-center justify-between text-sm bg-gray-50 dark:bg-gray-700/50 p-2 rounded-md border border-gray-200 dark:border-gray-600">
+                            <span className="truncate max-w-[260px]" title={`${doc.name} — ${doc.path}`}>
+                                📄 <span className="font-medium">{doc.name}</span>
+                                <span className="text-gray-500 dark:text-gray-400"> — {doc.path}</span>
+                            </span>
                             <button
                               type="button"
                               onClick={() => removeDocument(index)}
-                              className="text-red-500 hover:text-red-700 font-medium text-xs"
-                              disabled={isUploading}
+                              className="text-red-500 hover:text-red-700 font-medium text-xs shrink-0 ml-2"
                             >
-                              Remover
+                              Quitar
                             </button>
                           </li>
                         ))}
                       </ul>
                   </div>
-                )}
-                
-                {/* Archivos pendientes por subir */}
-                {pendingFiles.length > 0 && (
-                    <div className="mt-3">
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase">Pendientes por Subir</h4>
-                        <ul className="space-y-2 mt-2">
-                            {pendingFiles.map((file, index) => (
-                              <li key={`pending-${index}`} className="flex items-center justify-between text-sm bg-gray-50 dark:bg-gray-700/50 p-2 rounded-md border border-gray-200 dark:border-gray-600">
-                                <span className="truncate max-w-[200px] text-gray-500 dark:text-gray-400 italic" title={file.name}>⏳ {file.name}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => removePendingFile(index)}
-                                  className="text-gray-500 hover:text-gray-700 font-medium text-xs"
-                                  disabled={isUploading}
-                                >
-                                  Cancelar
-                                </button>
-                              </li>
-                            ))}
-                        </ul>
-                    </div>
                 )}
               </div>
             </div>
@@ -457,27 +411,15 @@ const StudentFormModal: React.FC<StudentFormModalProps> = ({ isOpen, onClose, on
               <button
                 type="button"
                 onClick={onClose}
-                disabled={isUploading}
-                className="px-4 py-2 border border-gray-300 dark:border-gray-500 text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                className="px-4 py-2 border border-gray-300 dark:border-gray-500 text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                disabled={isUploading}
-                className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                className="flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-                {isUploading ? (
-                    <>
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Subiendo a la Nube...
-                    </>
-                ) : (
-                    student ? 'Guardar Cambios' : 'Añadir Alumno'
-                )}
+                {student ? 'Guardar Cambios' : 'Añadir Alumno'}
               </button>
             </div>
           </form>

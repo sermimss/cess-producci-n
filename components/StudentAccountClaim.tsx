@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getDoc, doc, updateDoc } from 'firebase/firestore';
+import { getDoc, doc, updateDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 
 interface Props {
@@ -15,13 +15,14 @@ export const StudentAccountClaim: React.FC<Props> = ({ userEmail, onClaimSuccess
   const handleClaim = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userEmail) return setError('Error: No se encontró tu correo electrónico.');
-    if (!matricula.trim()) return setError('Ingresa una matrícula válida.');
+    const cleanMatricula = matricula.trim().toUpperCase();
+    if (!cleanMatricula) return setError('Ingresa una matrícula válida.');
 
     setLoading(true);
     setError('');
 
     try {
-      const studentRef = doc(db, 'students', matricula.trim());
+      const studentRef = doc(db, 'students', cleanMatricula);
       const studentSnap = await getDoc(studentRef);
 
       if (!studentSnap.exists()) {
@@ -35,7 +36,7 @@ export const StudentAccountClaim: React.FC<Props> = ({ userEmail, onClaimSuccess
       // Check if already claimed
       if (data.email && data.email.trim() !== '') {
         if (data.email.toLowerCase() === userEmail.toLowerCase()) {
-           onClaimSuccess(matricula);
+           onClaimSuccess(cleanMatricula);
            return;
         } else {
            setError('Esta matrícula ya se encuentra asociada a otro correo electrónico.');
@@ -44,13 +45,43 @@ export const StudentAccountClaim: React.FC<Props> = ({ userEmail, onClaimSuccess
         }
       }
 
-      // Valid for claim, update
+      // Valid for claim, update student record
       await updateDoc(studentRef, {
         email: userEmail,
         username: userEmail.split('@')[0],
       });
 
-      onClaimSuccess(matricula);
+      // Actualizar en cascada pagos y calificaciones previas para que sean visibles
+      try {
+        const batch = writeBatch(db);
+        let hasUpdates = false;
+
+        const paymentsQ = query(collection(db, 'payments'), where('studentId', '==', cleanMatricula));
+        const paymentsSnap = await getDocs(paymentsQ);
+        paymentsSnap.docs.forEach((pDoc) => {
+          if (!pDoc.data().studentEmail || pDoc.data().studentEmail !== userEmail) {
+            batch.update(pDoc.ref, { studentEmail: userEmail });
+            hasUpdates = true;
+          }
+        });
+
+        const gradesQ = query(collection(db, 'grades'), where('studentId', '==', cleanMatricula));
+        const gradesSnap = await getDocs(gradesQ);
+        gradesSnap.docs.forEach((gDoc) => {
+          if (!gDoc.data().studentEmail || gDoc.data().studentEmail !== userEmail) {
+            batch.update(gDoc.ref, { studentEmail: userEmail });
+            hasUpdates = true;
+          }
+        });
+
+        if (hasUpdates) {
+          await batch.commit();
+        }
+      } catch (cascadeError) {
+        console.warn('Aviso: no se pudieron actualizar en cascada todos los pagos/notas previas:', cascadeError);
+      }
+
+      onClaimSuccess(cleanMatricula);
     } catch (err: any) {
       console.error(err);
       setError('Hubo un error al verificar la matrícula. Verifica que sea correcta.');

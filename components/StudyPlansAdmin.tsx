@@ -169,7 +169,7 @@ const StudyPlansAdmin: React.FC = () => {
           {terms.map(term => {
             const termSubjects = subjectsForPlan.filter(s => s.term === term);
             return (
-              <div key={term} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden print:overflow-visible print:block">
+              <div key={term} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
                 <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
                   <h3 className="font-bold text-gray-900 dark:text-gray-100 text-lg">{termName} {term}</h3>
                 </div>

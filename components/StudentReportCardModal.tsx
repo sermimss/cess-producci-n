@@ -28,9 +28,9 @@ const StudentReportCardModal: React.FC<StudentReportCardModalProps> = ({ isOpen,
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4 print:p-0 print:bg-white print:static print:inset-auto print:block" onClick={onClose}>
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4 print:p-0 print:bg-white print:static print:inset-auto" onClick={onClose}>
       <div 
-        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl transform transition-all flex flex-col max-h-[90vh] print:max-h-none print:shadow-none print:w-full print:block"
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl transform transition-all flex flex-col max-h-[90vh] print:max-h-none print:shadow-none print:w-full"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center print:hidden">
@@ -53,7 +53,7 @@ const StudentReportCardModal: React.FC<StudentReportCardModalProps> = ({ isOpen,
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 print:p-0 print:overflow-visible print:block" id="printable-report-card">
+        <div className="flex-1 overflow-y-auto p-8 print:p-0 print:overflow-visible" id="printable-report-card">
           <div className="flex justify-between items-start mb-8">
             <div className="text-left">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 print:text-black">CESS PLANTEL CHIHUAHUA</h1>
@@ -138,7 +138,6 @@ const StudentReportCardModal: React.FC<StudentReportCardModalProps> = ({ isOpen,
             <p>Este documento es para fines informativos y no sustituye al certificado oficial.</p>
             <p className="mt-1">Generado el {new Date().toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
           </div>
-          <style dangerouslySetInnerHTML={{__html: `\n            @media print {\n              @page { margin: 1.5cm; }\n              body * { visibility: hidden; }\n              .fixed { position: absolute; }\n              .fixed * { visibility: visible; }\n              .fixed { left: 0; top: 0; width: 100%; height: auto !important; min-height: 100%; background: white !important; overflow: visible !important; }\n              .max-h-\[90vh\] { max-height: none !important; }\n            }\n          `}} />
         </div>
       </div>
     </div>

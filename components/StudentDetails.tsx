@@ -156,24 +156,13 @@ const StudentDetails: React.FC<StudentDetailsProps> = ({ student, groups, subjec
                 
                 {student.scannedDocuments && student.scannedDocuments.length > 0 && (
                   <div className="sm:col-span-2 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Documentos Escaneados</dt>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Expediente Físico (Referencias)</dt>
                     <dd className="mt-1 text-sm text-gray-900 dark:text-white">
-                      <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {student.scannedDocuments.map((doc, index) => (
-                          <li key={index} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-800/50">
-                            {doc.url.startsWith('data:image') ? (
-                              <a href={doc.url} target="_blank" rel="noopener noreferrer" className="block w-full text-center">
-                                <img src={doc.url} alt={doc.name} className="max-h-32 object-contain mx-auto mb-2 rounded" />
-                                <span className="text-indigo-600 dark:text-indigo-400 hover:underline text-xs truncate block">{doc.name}</span>
-                              </a>
-                            ) : (
-                              <a href={doc.url} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center text-indigo-600 dark:text-indigo-400 hover:underline">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mb-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                </svg>
-                                <span className="text-xs text-center truncate w-full px-2">{doc.name}</span>
-                              </a>
-                            )}
+                          <li key={index} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col bg-gray-50 dark:bg-gray-800/50">
+                            <span className="font-medium truncate" title={doc.name}>📄 {doc.name}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate" title={doc.path}>{doc.path}</span>
                           </li>
                         ))}
                       </ul>
