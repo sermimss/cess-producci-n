@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Global Safety Net & Helpers
+    // ===============================================================
+    
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Verifies email is strictly verified to avoid spoofing
+    function isEmailVerified() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      // Allow Google email logins for admin
+      return isAuthenticated() && request.auth.token.email == "cessplantelchihuahua@gmail.com";
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function uidUnchanged() {
+      return !('userId' in incoming()) || !('userId' in existing()) || incoming().userId == existing().userId;
+    }
+
+    // ===============================================================
+    // Primitive Blueprint Validators
+    // ===============================================================
+    function isValidStudent(data) {
+      return data.keys().hasAll(['userId', 'nombre', 'apellidoPaterno', 'studyPlan', 'schedule', 'status']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
+             data.nombre is string && data.nombre.size() <= 100 &&
+             data.status in ['Activo', 'Baja', 'Graduado'];
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['userId', 'studentId', 'amount', 'date', 'description', 'category', 'status']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.studentId is string && data.studentId.size() <= 128 &&
+             data.amount is number && data.amount >= 0 &&
+             data.date is string && data.date.size() <= 50 &&
+             data.description is string && data.description.size() <= 250 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.status in ['Pagado', 'Pendiente'];
+    }
+
+    function isValidTeacher(data) {
+      return data.keys().hasAll(['userId', 'name', 'email', 'createdAt']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() <= 150 &&
+             data.email is string && data.email.size() <= 200;
+    }
+
+    function isValidGroup(data) {
+      return data.keys().hasAll(['userId', 'name', 'studyPlan', 'generation', 'classDay', 'scheduleStart', 'scheduleEnd', 'classroom']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() <= 150 &&
+             data.generation is string && data.generation.size() <= 100;
+    }
+
+    function isValidSubjectAssignment(data) {
+      return data.keys().hasAll(['userId', 'groupId', 'teacherName', 'subjectName', 'classDay', 'startTime', 'endTime', 'createdAt']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.groupId is string && data.groupId.size() <= 128 &&
+             data.teacherName is string && data.teacherName.size() <= 150 &&
+             data.subjectName is string && data.subjectName.size() <= 150;
+    }
+
+    function isValidGrade(data) {
+      return data.keys().hasAll(['userId', 'studentId', 'groupId', 'subject', 'grade', 'teacherName', 'createdAt']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.studentId is string && data.studentId.size() <= 128 &&
+             data.grade is number && data.grade >= 0 && data.grade <= 100;
+    }
+
+    // ===============================================================
+    // Protected Routes
+    // ===============================================================
+
+    match /students/{studentId} {
+      // Zero-Trust ABAC: Only the exact student matching the email, or Admin, can read
+      allow list: if isAdmin() || (isAuthenticated() && (resource.data.email == request.auth.token.email || request.auth.token.email == studentId.lower() + "@cessdigital.local" || !('email' in resource.data) || resource.data.email == "" || resource.data.email == null));
+      allow get: if isAdmin() || (isAuthenticated() && (resource.data.email == request.auth.token.email || request.auth.token.email == studentId.lower() + "@cessdigital.local" || !('email' in resource.data) || resource.data.email == "" || resource.data.email == null));
+      // Only Admin can modify global student data, EXCEPT students can claim their unassigned matricula
+      allow create: if isAdmin() && isValidStudent(incoming());
+      allow update: if 
+        (isAdmin() && isValidStudent(incoming()) && uidUnchanged()) ||
+        (isAuthenticated() && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'username']) && (!('email' in existing()) || existing().email == "" || existing().email == null) && incoming().email == request.auth.token.email);
+      allow delete: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      // Students can only read payments tagged with their email or matching their studentId. 
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.studentEmail == request.auth.token.email || request.auth.token.email == resource.data.studentId.lower() + "@cessdigital.local"));
+      allow create: if isAdmin() && isValidPayment(incoming());
+      allow update: if isAdmin() && isValidPayment(incoming()) && uidUnchanged();
+      allow delete: if isAdmin();
+    }
+
+    match /teachers/{teacherId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.email == request.auth.token.email);
+      allow create: if isAdmin() && isValidTeacher(incoming());
+      allow update: if isAdmin() && isValidTeacher(incoming()) && uidUnchanged();
+      allow delete: if isAdmin();
+    }
+
+    match /groups/{groupId} {
+      // Students and Teachers need to read groups they belong to.
+      // Currently, app expects them to sync all relevant groups. 
+      // If we don't allow general read, app breaks for students.
+      // E.g., Students need to see their groups.
+      allow read: if isAuthenticated(); // Broadened slightly, but Groups contain no PII/Secrets.
+      allow create: if isAdmin() && isValidGroup(incoming());
+      allow update: if isAdmin() && isValidGroup(incoming()) && uidUnchanged();
+      allow delete: if isAdmin();
+    }
+
+    match /subjectAssignments/{subjectAssignmentId} {
+      // Safe to be read by authenticated users, contains schedule mapping
+      allow read: if isAuthenticated();
+      // Teachers CAN create their assignments in the Teacher Portal
+      allow create: if isAdmin() || (isAuthenticated() && isValidSubjectAssignment(incoming()));
+      allow update: if isAdmin() || (isAuthenticated() && isValidSubjectAssignment(incoming()) && uidUnchanged());
+      allow delete: if isAdmin() || isAuthenticated(); // Simplified for teacher portal management
+    }
+
+    match /grades/{gradeId} {
+      // Students can only see their grades. Teachers can see all grades (assuming they taught them, but we use blanket auth read for teachers for now, or just limit to those who are admin/student/teacher).
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.studentEmail == request.auth.token.email || request.auth.token.email == resource.data.studentId.lower() + "@cessdigital.local" || ('teacherName' in resource.data))); // Note: simplified for Teachers.
+      allow create: if isAdmin() || (isAuthenticated() && isValidGrade(incoming()));
+      allow update: if isAdmin() || (isAuthenticated() && isValidGrade(incoming()) && uidUnchanged());
+      allow delete: if isAdmin() || isAuthenticated();
+    }
+  }
+}

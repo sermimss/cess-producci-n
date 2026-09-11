@@ -1,0 +1,136 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "A student in the school",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "nombre": { "type": "string" },
+        "apellidoPaterno": { "type": "string" },
+        "apellidoMaterno": { "type": "string" },
+        "studyPlan": { "type": "string" },
+        "schedule": { "type": "string" },
+        "status": { "type": "string" },
+        "email": { "type": "string" },
+        "courseStartDate": { "type": "string" },
+        "paymentPlanStatus": { "type": "object" },
+        "scannedDocuments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string" }
+            },
+            "required": ["name", "url"]
+          }
+        }
+      },
+      "required": ["userId", "nombre", "apellidoPaterno", "studyPlan", "schedule", "status", "email"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A payment made by a student",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["userId", "studentId", "amount", "date", "description", "category", "status"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "A teacher in the school",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "name", "email", "createdAt"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "A class group",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "studyPlan": { "type": "string" },
+        "schedule": { "type": "string" },
+        "generation": { "type": "string" },
+        "classDay": { "type": "string" },
+        "scheduleStart": { "type": "string" },
+        "scheduleEnd": { "type": "string" },
+        "classroom": { "type": "string" },
+        "teachers": { "type": "array", "items": { "type": "string" } },
+        "studentIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["userId", "name", "studyPlan", "schedule", "generation", "classDay", "scheduleStart", "scheduleEnd", "classroom"]
+    },
+    "SubjectAssignment": {
+      "title": "SubjectAssignment",
+      "description": "A subject assigned to a teacher for a specific group",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "groupId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "classDay": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "groupId", "teacherName", "subjectName", "classDay", "startTime", "endTime", "createdAt"]
+    },
+    "Grade": {
+      "title": "Grade",
+      "description": "A student's grade for a subject",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "groupId": { "type": "string" },
+        "subject": { "type": "string" },
+        "grade": { "type": "number" },
+        "teacherName": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "studentId", "groupId", "subject", "grade", "teacherName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/students/{studentId}": {
+      "schema": { "$ref": "Student" },
+      "description": "Students collection"
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "Payment" },
+      "description": "Payments collection"
+    },
+    "/teachers/{teacherId}": {
+      "schema": { "$ref": "Teacher" },
+      "description": "Teachers collection"
+    },
+    "/groups/{groupId}": {
+      "schema": { "$ref": "Group" },
+      "description": "Groups collection"
+    },
+    "/subjectAssignments/{subjectAssignmentId}": {
+      "schema": { "$ref": "SubjectAssignment" },
+      "description": "Subject Assignments collection"
+    },
+    "/grades/{gradeId}": {
+      "schema": { "$ref": "Grade" },
+      "description": "Grades collection"
+    }
+  }
+}

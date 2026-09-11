@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@layer base {
+  @media print {
+    body * {
+      visibility: hidden;
+    }
+    #printable-report-card, #printable-report-card * {
+      visibility: visible;
+    }
+    #printable-report-card {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    .print\:hidden {
+      display: none !important;
+    }
+  }
+}
